@@ -6,7 +6,10 @@ import org.apache.commons.lang3.time.StopWatch;
 import org.apache.log4j.BasicConfigurator;
 import org.apache.log4j.Logger;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
+import java.util.function.Supplier;
 
 
 public class SemaphoreComputation {
@@ -50,7 +53,7 @@ public class SemaphoreComputation {
         MFThread.join();
 
         stopWatch.stop();
-        log.info(String.format("Calculation of matrix C and MF completed, time taken: %s ns", stopWatch.getNanoTime()));
+        log.info(String.format("Calculation of matrix C and MF completed, time taken: %s ms", stopWatch.getTime()));
     }
 
     // C = В * МС - D * MM
@@ -60,42 +63,48 @@ public class SemaphoreComputation {
             var stopWatch = new StopWatch();
             stopWatch.start();
 
-            log.info("Waiting to acquire B");
-            BSemaphore.acquire();
-            log.info("Acquired B");
+            Supplier<Matrix> B_MCSupplier = () -> {
+                try {
+                    BSemaphore.acquire();
+                    MCSemaphore.acquire();
 
-            log.info("Waiting to acquire MC");
-            MCSemaphore.acquire();
-            log.info("Acquired MC");
+                    var B_MC = B.multiplyRight("B_MC", MC);
 
-            var B_MC = B.multiplyRight("B_MC", MC);
+                    BSemaphore.release();
+                    MCSemaphore.release();
 
-            BSemaphore.release();
-            log.info("Released B");
-            MCSemaphore.release();
-            log.info("Released MC");
+                    return B_MC;
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            };
 
-            log.info("Waiting to acquire D");
-            DSemaphore.acquire();
-            log.info("Acquired D");
+            Supplier<Matrix> D_MMSupplier = () -> {
+                try {
+                    DSemaphore.acquire();
+                    MMSemaphore.acquire();
 
-            log.info("Waiting to acquire MM");
-            MMSemaphore.acquire();
-            log.info("Acquired MM");
+                    var D_MM = D.multiplyRight("D_MM", MM);
 
-            var D_MM = D.multiplyRight("D_MM", MM);
+                    DSemaphore.release();
+                    MMSemaphore.release();
 
-            DSemaphore.release();
-            log.info("Released D");
-            MMSemaphore.release();
-            log.info("Released MM");
+                    return D_MM;
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            };
 
-            var C = B_MC.subtract("C", D_MM);
+            CompletableFuture<Matrix> CFuture = CompletableFuture.supplyAsync(B_MCSupplier)
+                    .thenCombine(CompletableFuture.supplyAsync(D_MMSupplier), (B_MC, D_MM) -> B_MC.subtract("C", D_MM));
+
+            var C = CFuture.get();
+
             stopWatch.stop();
 
-            log.info(String.format("Time taken to calculate matrix %s is %s ns", C.getName(), stopWatch.getNanoTime()));
+            log.info(String.format("Time taken to calculate matrix %s is %s ms", C.getName(), stopWatch.getTime()));
             FileUtil.storeMatrix("output", C);
-        } catch (InterruptedException exception) {
+        } catch (InterruptedException | ExecutionException exception) {
             throw new RuntimeException(exception);
         }
     }
@@ -108,71 +117,75 @@ public class SemaphoreComputation {
             var stopWatch = new StopWatch();
             stopWatch.start();
 
-            log.info("Waiting to acquire MC");
-            MCSemaphore.acquire();
-            log.info("Acquired MC");
+            Supplier<Matrix> MC_MZSupplier = () -> {
+                try {
+                    MCSemaphore.acquire();
+                    MZSemaphore.acquire();
 
-            log.info("Waiting to acquire MZ");
-            MZSemaphore.acquire();
-            log.info("Acquired MZ");
+                    var MC_MZ = MC.multiplyRight("MC_MZ", MZ);
 
-            var MC_MZ = MC.multiplyRight("MC_MZ", MZ);
+                    MCSemaphore.release();
+                    MZSemaphore.release();
 
-            MCSemaphore.release();
-            log.info("Released MC");
-            MZSemaphore.release();
-            log.info("Released MZ");
+                    return MC_MZ;
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            };
 
-            log.info("Waiting to acquire B");
-            BSemaphore.acquire();
-            log.info("Acquired B");
+            Supplier<Matrix> B_DSupplier = () -> {
+                try {
+                    BSemaphore.acquire();
+                    DSemaphore.acquire();
 
-            log.info("Waiting to acquire D");
-            DSemaphore.acquire();
-            log.info("Acquired D");
+                    var B_D = B.add("B_D", D);
 
-            var B_D = B.add("B_D", D);
+                    BSemaphore.release();
+                    DSemaphore.release();
 
-            BSemaphore.release();
-            log.info("Released B");
-            DSemaphore.release();
-            log.info("Released D");
+                    return B_D;
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            };
 
-            var B_D_MC_MZ = MC_MZ.multiply("B_D_MC_MZ", "min_BD", B_D.min());
+            var B_D_MC_MZFuture = CompletableFuture
+                    .supplyAsync(MC_MZSupplier)
+                    .thenCombine(CompletableFuture.supplyAsync(B_DSupplier), (MC_MZ, B_D) -> MC_MZ.multiply("B_D_MC_MZ", "min_BD", B_D.min()));
 
-            log.info("Waiting to acquire MC");
-            MCSemaphore.acquire();
-            log.info("Acquired MC");
+            Supplier<Matrix> MM_MC_MM_aSupplier = () -> {
+                try {
+                    MCSemaphore.acquire();
+                    MMSemaphore.acquire();
 
-            log.info("Waiting to acquire MM");
-            MMSemaphore.acquire();
-            log.info("Acquired MM");
+                    var MC_MM = MC.add("MC_MM", MM);
 
-            var MC_MM = MC.add("MC_MM", MM);
+                    MCSemaphore.release();
 
-            MCSemaphore.release();
-            log.info("Released MC");
+                    var MM_MC_MM = MM.multiplyRight("MM_MC_MM", MC_MM);
 
-            var MM_MC_MM = MM.multiplyRight("MM_MC_MM", MC_MM);
+                    MMSemaphore.release();
+                    aSemaphore.acquire();
 
-            MMSemaphore.release();
-            log.info("Released MM");
+                    var MM_MC_MM_a = MM_MC_MM.multiply("MM_MC_MM_a", "a", a);
 
-            log.info("Waiting to acquire a");
-            aSemaphore.acquire();
-            log.info("Acquired a");
+                    aSemaphore.release();
 
-            var MM_MC_MM_a = MM_MC_MM.multiply("MM_MC_MM_a", "a", a);
+                    return MM_MC_MM_a;
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            };
 
-            aSemaphore.release();
-            log.info("Released a");
+            CompletableFuture<Matrix> MFFuture = B_D_MC_MZFuture
+                    .thenCombine(CompletableFuture.supplyAsync(MM_MC_MM_aSupplier), (B_D_MC_MZ, MM_MC_MM_a) -> B_D_MC_MZ.add("MF", MM_MC_MM_a));
 
-            var MF = B_D_MC_MZ.add("MF", MM_MC_MM_a);
+            var MF = MFFuture.get();
             stopWatch.stop();
 
-            log.info(String.format("Time taken to calculate matrix %s is %s ns", MF.getName(), stopWatch.getNanoTime()));
+            log.info(String.format("Time taken to calculate matrix %s is %s ms", MF.getName(), stopWatch.getTime()));
             FileUtil.storeMatrix("output", MF);
-        } catch (InterruptedException exception) {
+        } catch (InterruptedException | ExecutionException exception) {
             throw new RuntimeException(exception);
         }
     }

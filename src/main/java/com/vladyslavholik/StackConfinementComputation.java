@@ -39,7 +39,7 @@ public class StackConfinementComputation {
         MFThread.join();
 
         stopWatch.stop();
-        log.info(String.format("Calculation of matrix C and MF completed, time taken: %s ns", stopWatch.getNanoTime()));
+        log.info(String.format("Calculation of matrix C and MF completed, time taken: %s ms", stopWatch.getTime()));
     }
 
     // C = В * МС - D * MM
@@ -73,7 +73,7 @@ public class StackConfinementComputation {
 
             var C = CFuture.get();
             stopWatch.stop();
-            log.info(String.format("Time taken to calculate matrix %s is %s ns", C.getName(), stopWatch.getNanoTime()));
+            log.info(String.format("Time taken to calculate matrix %s is %s ms", C.getName(), stopWatch.getTime()));
             FileUtil.storeMatrix("output", C);
 
         } catch (InterruptedException | ExecutionException exception) {
@@ -128,7 +128,7 @@ public class StackConfinementComputation {
             var MF = MFFuture.get();
             stopWatch.stop();
 
-            log.info(String.format("Time taken to calculate matrix %s is %s ns", MF.getName(), stopWatch.getNanoTime()));
+            log.info(String.format("Time taken to calculate matrix %s is %s ms", MF.getName(), stopWatch.getTime()));
             FileUtil.storeMatrix("output", MF);
         } catch (InterruptedException | ExecutionException exception) {
             throw new RuntimeException(exception);
